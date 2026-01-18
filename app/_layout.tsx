@@ -1,5 +1,7 @@
 import { Stack } from "expo-router";
 import "./global.css";
+import { Provider } from "react-redux";
+import { store } from "@/store";
 import { PremiumProvider, usePremium } from "@/contexts/PremiumContext";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { AudioManagerProvider } from "@/contexts/AudioManagerContext";
@@ -61,19 +63,21 @@ function RootLayoutNav() {
 
 export default function RootLayout() {
   return (
-    <AuthProvider>
-      <PremiumProvider>
-        <ThemeProvider>
-          <DenominationProvider>
-            <AudioManagerProvider>
-              <VocalMixProvider>
-                <RootLayoutNav />
-              </VocalMixProvider>
-            </AudioManagerProvider>
-          </DenominationProvider>
-        </ThemeProvider>
-      </PremiumProvider>
-    </AuthProvider>
+    <Provider store={store}>
+      <AuthProvider>
+        <PremiumProvider>
+          <ThemeProvider>
+            <DenominationProvider>
+              <AudioManagerProvider>
+                <VocalMixProvider>
+                  <RootLayoutNav />
+                </VocalMixProvider>
+              </AudioManagerProvider>
+            </DenominationProvider>
+          </ThemeProvider>
+        </PremiumProvider>
+      </AuthProvider>
+    </Provider>
   );
 }
 

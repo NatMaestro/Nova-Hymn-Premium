@@ -11,10 +11,11 @@ import {
   TouchableOpacity,
   View,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React from "react";
-import { getCategories, getHymns, getHymnById, getDailyHymn } from "@/lib/api";
+import { getHymnById } from "@/lib/api";
 import { mockHymns } from "@/lib/mockData";
 import { Hymn } from "@/types";
 import { usePremium } from "@/contexts/PremiumContext";
@@ -23,6 +24,19 @@ import { useResponsive } from "@/hooks/useResponsive";
 import DenominationSelector from "@/components/DenominationSelector";
 import { useDenomination } from "@/contexts/DenominationContext";
 import DenominationSidebar from "@/components/DenominationSidebar";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchHymns } from "@/store/slices/hymnsSlice";
+import { fetchCategories } from "@/store/slices/categoriesSlice";
+import { fetchDailyHymn } from "@/store/slices/dailyHymnSlice";
+import { RootState } from "@/store";
+import {
+  selectHymnsByDenomination,
+  selectHymnsLoading,
+  selectAllCategories,
+  selectCategoriesLoading,
+  selectDailyHymn,
+  selectDailyHymnLoading,
+} from "@/store/selectors";
 
 const FAVORITES_KEY = "favorite_hymns";
 const FREE_FAVORITES_LIMIT = 10;
@@ -35,63 +49,45 @@ const HomeScreen = () => {
   const { isPremium } = usePremium();
   const { theme } = useTheme();
   const { selectedDenomination, selectedPeriod } = useDenomination();
+  const dispatch = useAppDispatch();
   const [selectedCategory, setSelectedCategory] = useState("");
-  const [categories, setCategories] = useState<Array<any>>([]);
   const [favorites, setFavorites] = useState<Hymn[]>([]);
-  const [allHymns, setAllHymns] = useState<Hymn[]>([]);
-  const [randomHymn, setRandomHymn] = useState<Hymn | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const responsive = useResponsive();
 
-  React.useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const categories = await getCategories();
-        console.log("Fetched Categories:", categories);
-        setCategories(categories);
-      } catch (error) {
-        console.error("Error fetching categories:", error);
-      }
-    };
-    fetchCategories();
-  }, []);
+  // Redux selectors
+  const allHymns = useAppSelector((state: RootState) =>
+    selectHymnsByDenomination(
+      state,
+      selectedDenomination?.id,
+      selectedDenomination?.slug === "catholic" && selectedPeriod
+        ? selectedPeriod
+        : undefined
+    )
+  );
+  const loadingHymns = useAppSelector(selectHymnsLoading);
+  const categories = useAppSelector(selectAllCategories);
+  const loadingCategories = useAppSelector(selectCategoriesLoading);
+  const randomHymn = useAppSelector(selectDailyHymn);
+  const loadingDailyHymn = useAppSelector(selectDailyHymnLoading);
 
+  // Fetch categories from Redux (with caching)
   React.useEffect(() => {
-    const fetchAllHymns = async () => {
-      try {
-        const params: any = {};
-        if (selectedDenomination) {
-          params.denomination = selectedDenomination.id;
-          if (selectedDenomination.slug === "catholic" && selectedPeriod) {
-            params.hymn_period = selectedPeriod;
-          }
-        }
-        const response = await getHymns(params);
-        // Transform HymnListResponse[] to Hymn[]
-        const hymns: Hymn[] = response.results.map((h) => ({
-          id: h.id,
-          number: h.number,
-          title: h.title,
-          slug: h.slug,
-          author: h.author,
-          author_name: h.author_name,
-          category: h.category,
-          category_name: h.category_name,
-          language: h.language,
-          is_premium: h.is_premium,
-          is_featured: h.is_featured,
-          view_count: h.view_count,
-          created_at: h.created_at,
-        }));
-        setAllHymns(hymns);
-      } catch (error) {
-        console.error("Error fetching hymns:", error);
-        // Fallback to sample data if API fails
-        setAllHymns(sampleData);
+    dispatch(fetchCategories());
+  }, [dispatch]);
+
+  // Fetch hymns from Redux (with caching)
+  React.useEffect(() => {
+    if (selectedDenomination) {
+      const params: any = {
+        denomination: selectedDenomination.id,
+      };
+      if (selectedDenomination.slug === "catholic" && selectedPeriod) {
+        params.hymn_period = selectedPeriod;
       }
-    };
-    fetchAllHymns();
-  }, [selectedDenomination, selectedPeriod]);
+      dispatch(fetchHymns(params));
+    }
+  }, [dispatch, selectedDenomination, selectedPeriod]);
 
   useFocusEffect(
     useCallback(() => {
@@ -214,7 +210,7 @@ const HomeScreen = () => {
           console.log("Final favorites count:", favoriteHymns.length);
           console.log(
             "Final favorites:",
-            favoriteHymns.map((h) => ({ id: h.id, title: h.title }))
+            favoriteHymns.map((h: Hymn) => ({ id: h.id, title: h.title }))
           );
           setFavorites(favoriteHymns);
         } catch (error) {
@@ -236,50 +232,10 @@ const HomeScreen = () => {
     router.push(`/all-hymns/index?category=${encodeURIComponent(categoryStr)}`);
   };
 
-  // Fetch hymn of the day from backend
+  // Fetch daily hymn from Redux (with caching - only fetches once per day)
   React.useEffect(() => {
-    const fetchDailyHymn = async () => {
-      try {
-        const dailyHymnData = await getDailyHymn();
-        // Transform to Hymn format
-        const hymn: Hymn = {
-          id: dailyHymnData.id,
-          number: dailyHymnData.number,
-          title: dailyHymnData.title,
-          slug: dailyHymnData.slug,
-          author: dailyHymnData.author,
-          author_name: dailyHymnData.author_name,
-          author_biography: dailyHymnData.author_biography || undefined,
-          category: dailyHymnData.category,
-          category_name: dailyHymnData.category_name,
-          language: dailyHymnData.language,
-          verses: dailyHymnData.verses || [],
-          sheetMusicUrl: dailyHymnData.sheet_music_url || null,
-          audioUrls: dailyHymnData.audio_urls || null,
-          scriptureReferences: dailyHymnData.scripture_references || [],
-          history: dailyHymnData.history || null,
-          meter: dailyHymnData.meter || null,
-          key_signature: dailyHymnData.key_signature || null,
-          time_signature: dailyHymnData.time_signature || null,
-          is_premium: dailyHymnData.is_premium,
-          is_featured: dailyHymnData.is_featured,
-          view_count: dailyHymnData.view_count,
-          created_at: dailyHymnData.created_at,
-          updated_at: dailyHymnData.updated_at,
-        };
-        setRandomHymn(hymn);
-      } catch (error: any) {
-        // If no hymns available (404), set to null to show message
-        if (error.response?.status === 404) {
-          setRandomHymn(null);
-        } else {
-          console.error("Error fetching daily hymn:", error);
-          setRandomHymn(null);
-        }
-      }
-    };
-    fetchDailyHymn();
-  }, []);
+    dispatch(fetchDailyHymn());
+  }, [dispatch]);
 
   return (
     <>
@@ -339,12 +295,19 @@ const HomeScreen = () => {
               onClose={() => setSidebarOpen(false)}
             />
 
-            <View className="border-2 border-[#E4E4E4] min-h-[400px] mt-10 rounded-3xl p-5">
+            <View className=" flex flex-col border-2 border-[#E4E4E4] min-h-[400px] mt-10 rounded-3xl p-5">
               <Text className="text-2xl font-semibold text-[#062958]">
                 Hymn of the Day
               </Text>
-              <View className="border bg-[#FFFEF1] min-h-[265px] rounded-3xl mt-5 p-5 flex-1">
-                {randomHymn ? (
+              <View className="border bg-[#FFFEF1] min-h-[300px] rounded-3xl mt-5 p-5">
+                {loadingDailyHymn ? (
+                  <View className="flex-1 justify-center items-center">
+                    <ActivityIndicator size="large" color="#062958" />
+                    <Text className="text-lg mt-4 text-center text-[#062958] opacity-70">
+                      Loading hymn of the day...
+                    </Text>
+                  </View>
+                ) : randomHymn ? (
                   <View className="flex flex-col flex-1">
                     <View className="flex-1">
                       <Text className="font-bold text-[#062958] text-xl">
@@ -358,19 +321,6 @@ const HomeScreen = () => {
                           "No lyrics available"}
                       </Text>
                     </View>
-                    <TouchableOpacity
-                      className="shadow-md mt-auto pt-4"
-                      onPress={() =>
-                        router.push({
-                          pathname: "/all-hymns/[id]",
-                          params: { id: randomHymn.id },
-                        })
-                      }
-                    >
-                      <Text className="text-2xl font-bold text-[#062958]">
-                        Read More...
-                      </Text>
-                    </TouchableOpacity>
                   </View>
                 ) : (
                   <View className="flex-1 justify-center items-center">
@@ -383,6 +333,21 @@ const HomeScreen = () => {
                   </View>
                 )}
               </View>
+              <View className="mt-auto">
+                <TouchableOpacity
+                  className="shadow-md "
+                  onPress={() =>
+                    router.push({
+                      pathname: "/all-hymns/[id]",
+                      params: { id: randomHymn?.id || "" },
+                    })
+                  }
+                >
+                  <Text className="mt-12 text-2xl font-bold text-[#062958]">
+                    Read More...
+                  </Text>
+                </TouchableOpacity>
+              </View>
             </View>
           </View>
 
@@ -392,36 +357,47 @@ const HomeScreen = () => {
               showsHorizontalScrollIndicator={false}
               className="px-5 my-8"
             >
-              <TouchableOpacity onPress={() => handleCategorySort("all")}>
-                <Text
-                  className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
-                    selectedCategory === "all" || selectedCategory === ""
-                      ? "bg-[#071c49] text-white"
-                      : "bg-[#F6F1DA] text-[#062958]"
-                  }`}
-                >
-                  All
-                </Text>
-              </TouchableOpacity>
-              {categories.map((cat) => {
-                const isSelected = selectedCategory === String(cat.id);
-                return (
-                  <TouchableOpacity
-                    key={cat.id}
-                    onPress={() => handleCategorySort(cat.id)}
-                  >
+              {loadingCategories ? (
+                <View className="flex-row items-center px-4">
+                  <ActivityIndicator size="small" color="#062958" />
+                  <Text className="ml-2 text-base text-[#062958] opacity-70">
+                    Loading categories...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity onPress={() => handleCategorySort("all")}>
                     <Text
                       className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
-                        isSelected
+                        selectedCategory === "all" || selectedCategory === ""
                           ? "bg-[#071c49] text-white"
                           : "bg-[#F6F1DA] text-[#062958]"
                       }`}
                     >
-                      {cat?.name}
+                      All
                     </Text>
                   </TouchableOpacity>
-                );
-              })}
+                  {categories.map((cat: any) => {
+                    const isSelected = selectedCategory === String(cat.id);
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => handleCategorySort(cat.id)}
+                      >
+                        <Text
+                          className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
+                            isSelected
+                              ? "bg-[#071c49] text-white"
+                              : "bg-[#F6F1DA] text-[#062958]"
+                          }`}
+                        >
+                          {cat?.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </>
+              )}
             </ScrollView>
           </View>
 
@@ -628,7 +604,7 @@ const HomeScreen = () => {
               showsHorizontalScrollIndicator={false}
               className="px-5 my-6"
             >
-              {categories.map((cat) => {
+              {categories.map((cat: any) => {
                 const isSelected = selectedCategory === String(cat.id);
                 return (
                   <TouchableOpacity

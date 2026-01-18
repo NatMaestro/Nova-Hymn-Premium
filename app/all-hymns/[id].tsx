@@ -9,6 +9,7 @@ import {
   ScrollView,
   Alert,
   StyleSheet,
+  ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { useEffect, useState } from "react";
@@ -291,8 +292,11 @@ export default function HymnDetail() {
         style={[styles.container, { backgroundColor: theme.colors.background }]}
       >
         <View style={styles.centerContent}>
-          <Text style={[styles.loadingText, { color: theme.colors.text }]}>
-            Loading...
+          <ActivityIndicator size="large" color={theme.colors.primary} />
+          <Text
+            style={[styles.loadingText, { color: theme.colors.text, marginTop: 16 }]}
+          >
+            Loading hymn...
           </Text>
         </View>
       </SafeAreaView>

@@ -11,16 +11,29 @@ import {
   TouchableOpacity,
   View,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import React from "react";
-import { getCategories, getHymns, getHymnById, getDailyHymn } from "@/lib/api";
+import { getHymnById } from "@/lib/api";
 import { mockHymns } from "@/lib/mockData";
 import { Hymn } from "@/types";
 import { usePremium } from "@/contexts/PremiumContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useDenomination } from "@/contexts/DenominationContext";
 import DenominationSidebar from "@/components/DenominationSidebar";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchHymns, fetchHymnById } from "@/store/slices/hymnsSlice";
+import { fetchCategories } from "@/store/slices/categoriesSlice";
+import { fetchDailyHymn } from "@/store/slices/dailyHymnSlice";
+import {
+  selectHymnsByDenomination,
+  selectHymnsLoading,
+  selectAllCategories,
+  selectCategoriesLoading,
+  selectDailyHymn,
+  selectDailyHymnLoading,
+} from "@/store/selectors";
 
 const FAVORITES_KEY = "favorite_hymns";
 const FREE_FAVORITES_LIMIT = 10;
@@ -33,82 +46,42 @@ const HomeScreen = () => {
   const { isPremium } = usePremium();
   const { theme } = useTheme();
   const { selectedDenomination, selectedPeriod } = useDenomination();
+  const dispatch = useAppDispatch();
   const [selectedCategory, setSelectedCategory] = useState("");
-  const [categories, setCategories] = useState<Array<any>>([]);
   const [favorites, setFavorites] = useState<Hymn[]>([]);
-  const [allHymns, setAllHymns] = useState<Hymn[]>([]);
-  const [randomHymn, setRandomHymn] = useState<Hymn | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  // Redux selectors
+  const allHymns = useAppSelector((state) =>
+    selectHymnsByDenomination(
+      state,
+      selectedDenomination?.id,
+      selectedDenomination?.slug === "catholic" ? selectedPeriod : undefined
+    )
+  );
+  const loadingHymns = useAppSelector(selectHymnsLoading);
+  const categories = useAppSelector(selectAllCategories);
+  const loadingCategories = useAppSelector(selectCategoriesLoading);
+  const randomHymn = useAppSelector(selectDailyHymn);
+  const loadingDailyHymn = useAppSelector(selectDailyHymnLoading);
+
+  // Fetch categories from Redux
   React.useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const categories = await getCategories();
-        console.log("Fetched Categories:", categories);
-        setCategories(categories);
-      } catch (error) {
-        console.error("Error fetching categories:", error);
-      }
-    };
-    fetchCategories();
-  }, []);
+    dispatch(fetchCategories());
+  }, [dispatch]);
 
+  // Fetch hymns from Redux (with caching)
   React.useEffect(() => {
-    const fetchAllHymns = async () => {
-      try {
-        console.log("Fetching hymns...");
-        const params: any = {};
-        if (selectedDenomination) {
-          params.denomination = selectedDenomination.id;
-          if (selectedDenomination.slug === "catholic" && selectedPeriod) {
-            params.hymn_period = selectedPeriod;
-          }
-        }
-        const response = await getHymns(params);
-        console.log("Hymns response:", response);
-        console.log("Hymns count:", response.results.length);
-
-        // Transform HymnListResponse[] to Hymn[]
-        const hymns: Hymn[] = response.results.map((h) => ({
-          id: h.id,
-          number: h.number,
-          title: h.title,
-          slug: h.slug,
-          author: h.author,
-          author_name: h.author_name,
-          category: h.category,
-          category_name: h.category_name,
-          language: h.language,
-          is_premium: h.is_premium,
-          is_featured: h.is_featured,
-          view_count: h.view_count,
-          created_at: h.created_at,
-        }));
-
-        console.log("Transformed hymns count:", hymns.length);
-        console.log("First hymn:", hymns[0]);
-
-        // Merge with sample data to ensure we have hymns
-        const mergedHymns = [...hymns, ...sampleData];
-        // Remove duplicates by id
-        const uniqueHymns = mergedHymns.reduce((acc: Hymn[], hymn: Hymn) => {
-          if (!acc.find((h: Hymn) => h.id === hymn.id)) {
-            acc.push(hymn);
-          }
-          return acc;
-        }, [] as Hymn[]);
-
-        console.log("Final unique hymns count:", uniqueHymns.length);
-        setAllHymns(uniqueHymns);
-      } catch (error) {
-        console.error("Error fetching hymns:", error);
-        // Fallback to sample data if API fails
-        console.log("Using sample data as fallback");
-        setAllHymns(sampleData);
+    if (selectedDenomination) {
+      const params: any = {
+        denomination: selectedDenomination.id,
+      };
+      if (selectedDenomination.slug === "catholic" && selectedPeriod) {
+        params.hymn_period = selectedPeriod;
       }
-    };
-    fetchAllHymns();
-  }, [selectedDenomination, selectedPeriod]);
+      dispatch(fetchHymns(params));
+    }
+  }, [dispatch, selectedDenomination, selectedPeriod]);
 
   useFocusEffect(
     useCallback(() => {
@@ -127,7 +100,7 @@ const HomeScreen = () => {
             ? favoriteIds
             : favoriteIds.slice(0, FREE_FAVORITES_LIMIT);
 
-          // Combine API hymns and sample data for lookup
+          // Use Redux hymns and sample data for lookup
           const allAvailableHymns = [...allHymns, ...sampleData];
 
           // Remove duplicates by id
@@ -252,50 +225,10 @@ const HomeScreen = () => {
     router.push(`/(tabs)/all-hymns?category=${encodeURIComponent(category)}`);
   };
 
-  // Fetch hymn of the day from backend
+  // Fetch daily hymn from Redux (with caching - only fetches once per day)
   React.useEffect(() => {
-    const fetchDailyHymn = async () => {
-      try {
-        const dailyHymnData = await getDailyHymn();
-        // Transform to Hymn format
-        const hymn: Hymn = {
-          id: dailyHymnData.id,
-          number: dailyHymnData.number,
-          title: dailyHymnData.title,
-          slug: dailyHymnData.slug,
-          author: dailyHymnData.author,
-          author_name: dailyHymnData.author_name,
-          author_biography: dailyHymnData.author_biography || undefined,
-          category: dailyHymnData.category,
-          category_name: dailyHymnData.category_name,
-          language: dailyHymnData.language,
-          verses: dailyHymnData.verses || [],
-          sheetMusicUrl: dailyHymnData.sheet_music_url || null,
-          audioUrls: dailyHymnData.audio_urls || null,
-          scriptureReferences: dailyHymnData.scripture_references || [],
-          history: dailyHymnData.history || null,
-          meter: dailyHymnData.meter || null,
-          key_signature: dailyHymnData.key_signature || null,
-          time_signature: dailyHymnData.time_signature || null,
-          is_premium: dailyHymnData.is_premium,
-          is_featured: dailyHymnData.is_featured,
-          view_count: dailyHymnData.view_count,
-          created_at: dailyHymnData.created_at,
-          updated_at: dailyHymnData.updated_at,
-        };
-        setRandomHymn(hymn);
-      } catch (error: any) {
-        // If no hymns available (404), set to null to show message
-        if (error.response?.status === 404) {
-          setRandomHymn(null);
-        } else {
-          console.error("Error fetching daily hymn:", error);
-          setRandomHymn(null);
-        }
-      }
-    };
-    fetchDailyHymn();
-  }, []);
+    dispatch(fetchDailyHymn());
+  }, [dispatch]);
 
   return (
     <SafeAreaView
@@ -373,7 +306,17 @@ const HomeScreen = () => {
                 backgroundColor: theme.colors.card,
               }}
             >
-              {randomHymn ? (
+              {loadingDailyHymn ? (
+                <View className="flex-1 justify-center items-center">
+                  <ActivityIndicator size="large" color={theme.colors.navy} />
+                  <Text
+                    className="text-lg mt-4 text-center"
+                    style={{ color: theme.colors.textSecondary }}
+                  >
+                    Loading hymn of the day...
+                  </Text>
+                </View>
+              ) : randomHymn ? (
                 <View className="flex flex-col flex-1">
                   <View className="flex-1">
                     <Text
@@ -439,28 +382,40 @@ const HomeScreen = () => {
             showsHorizontalScrollIndicator={false}
             className="px-5 my-8"
           >
-            <TouchableOpacity onPress={() => handleCategorySort("all")}>
-              <Text
-                className={`px-4 py-2 rounded-full font-semibold mr-3 ${
-                  selectedCategory === "all" || selectedCategory === ""
-                    ? "text-white"
-                    : ""
-                }`}
-                style={{
-                  backgroundColor:
-                    selectedCategory === "all" || selectedCategory === ""
-                      ? theme.colors.navy
-                      : theme.colors.accent,
-                  color:
-                    selectedCategory === "all" || selectedCategory === ""
-                      ? "white"
-                      : theme.colors.text,
-                }}
-              >
-                All
-              </Text>
-            </TouchableOpacity>
-            {categories.map((cat) => {
+            {loadingCategories ? (
+              <View className="flex-row items-center px-4">
+                <ActivityIndicator size="small" color={theme.colors.primary} />
+                <Text
+                  className="ml-2 text-base"
+                  style={{ color: theme.colors.textSecondary }}
+                >
+                  Loading categories...
+                </Text>
+              </View>
+            ) : (
+              <>
+                <TouchableOpacity onPress={() => handleCategorySort("all")}>
+                  <Text
+                    className={`px-4 py-2 rounded-full font-semibold mr-3 ${
+                      selectedCategory === "all" || selectedCategory === ""
+                        ? "text-white"
+                        : ""
+                    }`}
+                    style={{
+                      backgroundColor:
+                        selectedCategory === "all" || selectedCategory === ""
+                          ? theme.colors.navy
+                          : theme.colors.accent,
+                      color:
+                        selectedCategory === "all" || selectedCategory === ""
+                          ? "white"
+                          : theme.colors.text,
+                    }}
+                  >
+                    All
+                  </Text>
+                </TouchableOpacity>
+                {categories.map((cat) => {
               const isSelected = selectedCategory === String(cat.id);
               return (
                 <TouchableOpacity
@@ -483,6 +438,8 @@ const HomeScreen = () => {
                 </TouchableOpacity>
               );
             })}
+              </>
+            )}
           </ScrollView>
         </View>
 

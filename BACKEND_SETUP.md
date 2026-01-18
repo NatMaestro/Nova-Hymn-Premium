@@ -111,3 +111,5 @@ The frontend uses these endpoints:
 4. ✅ Test authentication
 5. ✅ Test subscription features
 
+
+

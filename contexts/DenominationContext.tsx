@@ -58,10 +58,14 @@ export const DenominationProvider: React.FC<{ children: ReactNode }> = ({
       if (stored) {
         const denom = JSON.parse(stored);
         setSelectedDenominationState(denom);
+        console.log("Loaded stored denomination:", denom);
+      } else {
+        console.log("No stored denomination found");
       }
       
       if (storedPeriod) {
         setSelectedPeriodState(storedPeriod as "new" | "old");
+        console.log("Loaded stored period:", storedPeriod);
       }
     } catch (error) {
       console.error("Error loading stored denomination:", error);
@@ -74,38 +78,70 @@ export const DenominationProvider: React.FC<{ children: ReactNode }> = ({
     try {
       const { getDenominations } = await import("@/lib/api");
       const fetched = await getDenominations();
-      setDenominations(fetched);
-    } catch (error) {
-      console.error("Error fetching denominations:", error);
-      // Fallback to default denominations
-      const defaultDenominations: Denomination[] = [
-        {
-          id: 1,
-          name: "Catholic",
-          slug: "catholic",
-          description: "Catholic Church Hymns",
-          is_active: true,
-          display_order: 1,
-        },
-        {
-          id: 2,
-          name: "Methodist",
-          slug: "methodist",
-          description: "Methodist Church Hymns",
-          is_active: true,
-          display_order: 2,
-        },
-        {
-          id: 3,
-          name: "Baptist",
-          slug: "baptist",
-          description: "Baptist Church Hymns",
-          is_active: true,
-          display_order: 3,
-        },
-      ];
-      setDenominations(defaultDenominations);
+      if (fetched && fetched.length > 0) {
+        setDenominations(fetched);
+        console.log("✅ Fetched denominations from backend:", fetched);
+        
+        // Auto-select first denomination if none is selected
+        const stored = await AsyncStorage.getItem(STORAGE_KEY);
+        if (!stored) {
+          const firstDenom = fetched[0];
+          setSelectedDenominationState(firstDenom);
+          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(firstDenom));
+          console.log("✅ Auto-selected first denomination:", firstDenom);
+          
+          // If it's Catholic, also set default period to "new"
+          if (firstDenom.slug === "catholic") {
+            const storedPeriod = await AsyncStorage.getItem(PERIOD_STORAGE_KEY);
+            if (!storedPeriod) {
+              setSelectedPeriodState("new");
+              await AsyncStorage.setItem(PERIOD_STORAGE_KEY, "new");
+              console.log("✅ Auto-selected period: new");
+            }
+          }
+        }
+      } else {
+        // If backend returns empty array, use defaults
+        setDefaultDenominations();
+      }
+    } catch (error: any) {
+      // Silently fallback to default denominations if backend is unavailable
+      // This is expected when backend is not running or network is unavailable
+      if (__DEV__) {
+        console.warn("Backend unavailable, using default denominations:", error.message || "Network error");
+      }
+      setDefaultDenominations();
     }
+  };
+
+  const setDefaultDenominations = () => {
+    const defaultDenominations: Denomination[] = [
+      {
+        id: 1,
+        name: "Catholic",
+        slug: "catholic",
+        description: "Catholic Church Hymns",
+        is_active: true,
+        display_order: 1,
+      },
+      {
+        id: 2,
+        name: "Methodist",
+        slug: "methodist",
+        description: "Methodist Church Hymns",
+        is_active: true,
+        display_order: 2,
+      },
+      {
+        id: 3,
+        name: "Baptist",
+        slug: "baptist",
+        description: "Baptist Church Hymns",
+        is_active: true,
+        display_order: 3,
+      },
+    ];
+    setDenominations(defaultDenominations);
   };
 
   const setSelectedDenomination = async (

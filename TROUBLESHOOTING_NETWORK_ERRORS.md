@@ -196,3 +196,5 @@ If testing on a physical device (not emulator):
    - Variables are loaded correctly
    - Restart app after changes
 
+
+

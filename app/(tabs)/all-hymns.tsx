@@ -8,23 +8,32 @@ import {
   FlatList,
   ScrollView,
   TextInput,
+  ActivityIndicator,
 } from "react-native";
 import React, { useState } from "react";
 import SearchComponent from "@/components/Search";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getCategories, getHymns } from "@/lib/api";
 import { Hymn } from "@/types";
 import { useTheme } from "@/contexts/ThemeContext";
 import { useDenomination } from "@/contexts/DenominationContext";
 import DenominationSidebar from "@/components/DenominationSidebar";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchHymns } from "@/store/slices/hymnsSlice";
+import { fetchCategories } from "@/store/slices/categoriesSlice";
+import { RootState } from "@/store";
+import {
+  selectHymnsByDenomination,
+  selectHymnsLoading,
+  selectAllCategories,
+  selectCategoriesLoading,
+} from "@/store/selectors";
 
 const AllHymns = () => {
   const router = useRouter();
   const { theme } = useTheme();
   const { selectedDenomination, selectedPeriod } = useDenomination();
   const { category } = useLocalSearchParams<{ category: string }>();
-  const [categories, setCategories] = useState<Array<any>>([]);
-  const [dataItem, setDataItem] = useState<Hymn[]>([]);
+  const dispatch = useAppDispatch();
   const [searchedData, setSearchedData] = useState<Hymn[]>([]);
   const [selectedCategory, setSelectedCategory] = useState(category || "all");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -32,64 +41,51 @@ const AllHymns = () => {
   const [filterLanguage, setFilterLanguage] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  React.useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const params: any = {};
-        if (selectedDenomination) {
-          params.denomination = selectedDenomination.id;
-          if (selectedDenomination.slug === "catholic" && selectedPeriod) {
-            params.hymn_period = selectedPeriod;
-          }
-        }
-        const response = await getHymns(params);
-        // Transform HymnListResponse[] to Hymn[]
-        const hymns: Hymn[] = response.results.map((h) => ({
-          id: h.id,
-          number: h.number,
-          title: h.title,
-          slug: h.slug,
-          author: h.author,
-          author_name: h.author_name,
-          category: h.category,
-          category_name: h.category_name,
-          language: h.language,
-          is_premium: h.is_premium,
-          is_featured: h.is_featured,
-          view_count: h.view_count,
-          created_at: h.created_at,
-        }));
-        setDataItem(hymns);
-        setSearchedData(hymns);
-      } catch (error) {
-        console.error("Error fetching hymns:", error);
-        setDataItem([]);
-        setSearchedData([]);
-      }
-    };
-    fetchData();
-  }, [selectedDenomination, selectedPeriod]);
+  // Redux selectors
+  const dataItem = useAppSelector((state: RootState) =>
+    selectHymnsByDenomination(
+      state,
+      selectedDenomination?.id,
+      selectedDenomination?.slug === "catholic" && selectedPeriod
+        ? selectedPeriod
+        : undefined
+    )
+  );
+  const loadingHymns = useAppSelector(selectHymnsLoading);
+  const categories = useAppSelector(selectAllCategories);
+  const loadingCategories = useAppSelector(selectCategoriesLoading);
 
+  // Fetch hymns from Redux (with caching)
   React.useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const categories = await getCategories();
-        setCategories(categories);
-      } catch (error) {
-        console.error("Error fetching categories:", error);
+    if (selectedDenomination) {
+      const params: any = {
+        denomination: selectedDenomination.id,
+      };
+      if (selectedDenomination.slug === "catholic" && selectedPeriod) {
+        params.hymn_period = selectedPeriod;
       }
-    };
-    fetchCategories();
-  }, []);
+      dispatch(fetchHymns(params));
+    }
+  }, [dispatch, selectedDenomination, selectedPeriod]);
+
+  // Update searchedData when dataItem changes
+  React.useEffect(() => {
+    setSearchedData(dataItem);
+  }, [dataItem]);
+
+  // Fetch categories from Redux (with caching)
+  React.useEffect(() => {
+    dispatch(fetchCategories());
+  }, [dispatch]);
 
   React.useEffect(() => {
     if (!dataItem || dataItem.length === 0) return;
-    
+
     if (category && category !== "all") {
       // Convert category param to number for comparison
       const categoryId = Number(category);
       if (!isNaN(categoryId)) {
-        const filtered = dataItem.filter((item) => {
+        const filtered = dataItem.filter((item: Hymn) => {
           const itemCategoryId =
             typeof item.category === "number"
               ? item.category
@@ -102,14 +98,14 @@ const AllHymns = () => {
         setSelectedCategory(String(categoryId)); // Ensure it's a string for comparison
       } else {
         // If category is a string (name), find by name
-        const filtered = dataItem.filter((item) => {
+        const filtered = dataItem.filter((item: Hymn) => {
           const itemCategoryName = item.category_name || String(item.category);
           return itemCategoryName.toLowerCase() === category.toLowerCase();
         });
         setSearchedData(filtered);
         // Try to find the category ID from the name
-        const matchedCat = categories.find((cat: any) => 
-          cat.name?.toLowerCase() === category.toLowerCase()
+        const matchedCat = categories.find(
+          (cat: any) => cat.name?.toLowerCase() === category.toLowerCase()
         );
         setSelectedCategory(matchedCat ? String(matchedCat.id) : category);
       }
@@ -124,7 +120,7 @@ const AllHymns = () => {
       setSearchedData([]);
       return;
     }
-    
+
     let filteredItem: Hymn[];
     const categoryIdStr = String(categoryId).toLowerCase();
 
@@ -146,7 +142,7 @@ const AllHymns = () => {
             ? matchedCategory.id
             : Number(matchedCategory.id);
 
-        filteredItem = dataItem.filter((item) => {
+        filteredItem = dataItem.filter((item: Hymn) => {
           const itemCategoryId =
             typeof item.category === "number"
               ? item.category
@@ -170,13 +166,13 @@ const AllHymns = () => {
       setSearchedData([]);
       return;
     }
-    
+
     let filteredData = dataItem;
 
     // Text search
     if (searchQuery.trim()) {
       filteredData = filteredData.filter(
-        (item) =>
+        (item: Hymn) =>
           item.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
           item.number.toString().includes(searchQuery.toLowerCase()) ||
           (item.author &&
@@ -189,7 +185,7 @@ const AllHymns = () => {
     // Advanced filters
     if (filterAuthor) {
       filteredData = filteredData.filter(
-        (item) =>
+        (item: Hymn) =>
           item.author &&
           String(item.author).toLowerCase().includes(filterAuthor.toLowerCase())
       );
@@ -197,7 +193,7 @@ const AllHymns = () => {
 
     if (filterLanguage) {
       filteredData = filteredData.filter(
-        (item) =>
+        (item: Hymn) =>
           item.language &&
           item.language.toLowerCase().includes(filterLanguage.toLowerCase())
       );
@@ -223,15 +219,21 @@ const AllHymns = () => {
   };
 
   return (
-    <SafeAreaView className="flex-1" style={{ backgroundColor: theme.colors.background }}>
-      <StatusBar 
-        barStyle={theme.isDark ? "light-content" : "dark-content"} 
-        backgroundColor={theme.colors.background} 
+    <SafeAreaView
+      className="flex-1"
+      style={{ backgroundColor: theme.colors.background }}
+    >
+      <StatusBar
+        barStyle={theme.isDark ? "light-content" : "dark-content"}
+        backgroundColor={theme.colors.background}
       />
 
       <View className="mt-7 px-5">
         <View className="flex-row items-center justify-between">
-          <Text className="text-4xl font-bold" style={{ color: theme.colors.text }}>
+          <Text
+            className="text-4xl font-bold"
+            style={{ color: theme.colors.text }}
+          >
             All Hymns
           </Text>
           <TouchableOpacity
@@ -244,7 +246,10 @@ const AllHymns = () => {
               className="h-5 w-5"
               resizeMode="contain"
             />
-            <Text className="text-xs font-semibold" style={{ color: theme.colors.text }}>
+            <Text
+              className="text-xs font-semibold"
+              style={{ color: theme.colors.text }}
+            >
               {selectedDenomination
                 ? `${selectedDenomination.name}${
                     selectedDenomination.slug === "catholic" && selectedPeriod
@@ -269,47 +274,61 @@ const AllHymns = () => {
           showsHorizontalScrollIndicator={false}
           className="mt-4 px-5"
         >
-          <TouchableOpacity onPress={() => categorySort("all")}>
-            <Text
-              className={`px-4 py-2 rounded-full font-semibold mr-3 ${
-                selectedCategory === "all" ? "text-white" : ""
-              }`}
-              style={{
-                backgroundColor:
-                  selectedCategory === "all"
-                    ? theme.colors.navy
-                    : theme.colors.accent,
-                color:
-                  selectedCategory === "all" ? "white" : theme.colors.text,
-              }}
-            >
-              All
-            </Text>
-          </TouchableOpacity>
-          {categories.map((cat) => {
-            const catIdString = String(cat.id);
-            const isSelected = selectedCategory === catIdString;
-            return (
-              <TouchableOpacity
-                key={cat.id}
-                onPress={() => categorySort(catIdString)}
+          {loadingCategories ? (
+            <View className="flex-row items-center px-4">
+              <ActivityIndicator size="small" color={theme.colors.navy} />
+              <Text
+                className="ml-2 text-base"
+                style={{ color: theme.colors.textSecondary }}
               >
+                Loading categories...
+              </Text>
+            </View>
+          ) : (
+            <>
+              <TouchableOpacity onPress={() => categorySort("all")}>
                 <Text
                   className={`px-4 py-2 rounded-full font-semibold mr-3 ${
-                    isSelected ? "text-white" : ""
+                    selectedCategory === "all" ? "text-white" : ""
                   }`}
                   style={{
-                    backgroundColor: isSelected
-                      ? theme.colors.navy
-                      : theme.colors.accent,
-                    color: isSelected ? "white" : theme.colors.text,
+                    backgroundColor:
+                      selectedCategory === "all"
+                        ? theme.colors.navy
+                        : theme.colors.accent,
+                    color:
+                      selectedCategory === "all" ? "white" : theme.colors.text,
                   }}
                 >
-                  {cat?.name}
+                  All
                 </Text>
               </TouchableOpacity>
-            );
-          })}
+              {categories.map((cat: any) => {
+                const catIdString = String(cat.id);
+                const isSelected = selectedCategory === catIdString;
+                return (
+                  <TouchableOpacity
+                    key={cat.id}
+                    onPress={() => categorySort(catIdString)}
+                  >
+                    <Text
+                      className={`px-4 py-2 rounded-full font-semibold mr-3 ${
+                        isSelected ? "text-white" : ""
+                      }`}
+                      style={{
+                        backgroundColor: isSelected
+                          ? theme.colors.navy
+                          : theme.colors.accent,
+                        color: isSelected ? "white" : theme.colors.text,
+                      }}
+                    >
+                      {cat?.name}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </>
+          )}
         </ScrollView>
       </View>
 
@@ -321,10 +340,16 @@ const AllHymns = () => {
           onPress={() => setShowAdvancedFilters(!showAdvancedFilters)}
           className="flex-row items-center justify-between py-2"
         >
-          <Text className="font-semibold" style={{ color: theme.colors.textSecondary }}>
-            {showAdvancedFilters ? 'Hide' : 'Show'} Advanced Filters
+          <Text
+            className="font-semibold"
+            style={{ color: theme.colors.textSecondary }}
+          >
+            {showAdvancedFilters ? "Hide" : "Show"} Advanced Filters
           </Text>
-          <Text className="text-xs opacity-75" style={{ color: theme.colors.text }}>
+          <Text
+            className="text-xs opacity-75"
+            style={{ color: theme.colors.text }}
+          >
             Premium
           </Text>
         </TouchableOpacity>
@@ -337,12 +362,18 @@ const AllHymns = () => {
               borderColor: theme.colors.border,
             }}
           >
-            <Text className="text-lg font-semibold mb-3" style={{ color: theme.colors.text }}>
+            <Text
+              className="text-lg font-semibold mb-3"
+              style={{ color: theme.colors.text }}
+            >
               Filter by:
             </Text>
-            
+
             <View className="mb-3">
-              <Text className="text-sm mb-1" style={{ color: theme.colors.text }}>
+              <Text
+                className="text-sm mb-1"
+                style={{ color: theme.colors.text }}
+              >
                 Author
               </Text>
               <TextInput
@@ -363,7 +394,10 @@ const AllHymns = () => {
             </View>
 
             <View className="mb-3">
-              <Text className="text-sm mb-1" style={{ color: theme.colors.text }}>
+              <Text
+                className="text-sm mb-1"
+                style={{ color: theme.colors.text }}
+              >
                 Language
               </Text>
               <TextInput
@@ -389,7 +423,10 @@ const AllHymns = () => {
                 className="py-2 rounded mt-2"
                 style={{ backgroundColor: theme.colors.border }}
               >
-                <Text className="text-center font-semibold" style={{ color: theme.colors.text }}>
+                <Text
+                  className="text-center font-semibold"
+                  style={{ color: theme.colors.text }}
+                >
                   Clear Filters
                 </Text>
               </TouchableOpacity>
@@ -399,46 +436,66 @@ const AllHymns = () => {
       </View>
 
       <View className="flex-1 px-5 mt-4">
-        <FlatList
-          data={searchedData}
-          keyExtractor={(item) => item.id.toString()}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              onPress={() =>
-                router.push({
-                  pathname: "/all-hymns/[id]",
-                  params: { id: item.id },
-                })
-              }
-              className="flex-row items-center justify-between py-3 border-b"
-              style={{ borderBottomColor: theme.colors.border }}
+        {loadingHymns ? (
+          <View className="flex-1 justify-center items-center py-20">
+            <ActivityIndicator size="large" color={theme.colors.navy} />
+            <Text
+              className="text-lg mt-4 text-center"
+              style={{ color: theme.colors.textSecondary }}
             >
-              <View className="flex-row items-center">
-                <Text className="text-xl w-12" style={{ color: theme.colors.text }}>
-                  {item.number}
-                </Text>
-                <Text className="text-xl font-semibold ml-6" style={{ color: theme.colors.text }}>
-                  {truncateTitle(item.title)}
-                </Text>
-              </View>
-              <Image
-                source={require("../../assets/icons/forward.png")}
-                className="h-6 w-6"
-                resizeMode="contain"
-              />
-            </TouchableOpacity>
-          )}
-          showsVerticalScrollIndicator={true}
-          ListEmptyComponent={() => (
-            <Text className="text-center mt-4" style={{ color: theme.colors.text }}>
-              No hymns found.
+              Loading hymns...
             </Text>
-          )}
-        />
+          </View>
+        ) : (
+          <FlatList
+            data={searchedData}
+            keyExtractor={(item) => item.id.toString()}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                onPress={() =>
+                  router.push({
+                    pathname: "/all-hymns/[id]",
+                    params: { id: item.id },
+                  })
+                }
+                className="flex-row items-center justify-between py-3 border-b"
+                style={{ borderBottomColor: theme.colors.border }}
+              >
+                <View className="flex-row items-center">
+                  <Text
+                    className="text-xl w-12"
+                    style={{ color: theme.colors.text }}
+                  >
+                    {item.number}
+                  </Text>
+                  <Text
+                    className="text-xl font-semibold ml-6"
+                    style={{ color: theme.colors.text }}
+                  >
+                    {truncateTitle(item.title)}
+                  </Text>
+                </View>
+                <Image
+                  source={require("../../assets/icons/forward.png")}
+                  className="h-6 w-6"
+                  resizeMode="contain"
+                />
+              </TouchableOpacity>
+            )}
+            showsVerticalScrollIndicator={true}
+            ListEmptyComponent={() => (
+              <Text
+                className="text-center mt-4"
+                style={{ color: theme.colors.text }}
+              >
+                No hymns found.
+              </Text>
+            )}
+          />
+        )}
       </View>
     </SafeAreaView>
   );
 };
 
 export default AllHymns;
-

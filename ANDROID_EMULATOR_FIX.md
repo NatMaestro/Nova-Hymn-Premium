@@ -100,3 +100,5 @@ If `10.0.2.2` doesn't work, use your computer's IP:
 - ✅ Physical devices: Use computer IP in `.env`
 - ✅ Backend must run on `0.0.0.0:8000`
 
+
+

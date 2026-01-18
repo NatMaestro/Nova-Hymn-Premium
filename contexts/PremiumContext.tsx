@@ -10,15 +10,25 @@ import { Platform } from "react-native";
 import { useAuth } from "./AuthContext";
 import { REVENUECAT_API_KEYS, ENTITLEMENT_ID } from "@/lib/revenuecat";
 import { verifySubscription } from "@/lib/api";
+import { isAdUnlockActive, getRemainingUnlockTime, AdUnlockType } from "@/lib/adUnlock";
 
 // Dynamically import RevenueCat to handle cases where it's not installed
 let Purchases: any = null;
 try {
-  Purchases = require("react-native-purchases");
+  const PurchasesModule = require("react-native-purchases");
+  // Check if the module has the default export or named exports
+  Purchases = PurchasesModule.default || PurchasesModule;
+  
+  // Verify that Purchases has the required methods
+  if (Purchases && typeof Purchases.configure !== 'function') {
+    console.warn("RevenueCat SDK loaded but configure method not available");
+    Purchases = null;
+  }
 } catch (error) {
   console.warn(
     "react-native-purchases not available. Install with: npm install react-native-purchases"
   );
+  Purchases = null;
 }
 
 // Type definitions for RevenueCat (fallback if types not available)
@@ -49,18 +59,38 @@ interface PremiumContextType {
   checkPremiumStatus: () => Promise<void>;
   offerings: PurchasesOffering | null;
   toggleDevMode?: () => Promise<void>; // For development only
+  
+  // Ad-based unlock properties (for future AdMob integration)
+  adUnlockExpiresAt: Date | null;
+  adUnlockType: AdUnlockType | null;
+  remainingAdUnlockTime: number; // seconds remaining
+  canWatchAd: boolean;
+  watchAdForPremium: (unlockType: AdUnlockType) => Promise<void>; // Placeholder for AdMob integration
+  getAdUnlockStatus: () => {
+    isActive: boolean;
+    expiresAt: Date | null;
+    timeRemaining: number;
+  };
 }
 
 const PremiumContext = createContext<PremiumContextType | undefined>(undefined);
 
 const PREMIUM_STORAGE_KEY = "premium_status";
 const DEV_MODE_KEY = "dev_mode_premium"; // For development/testing
+const AD_UNLOCK_STORAGE_KEY = "ad_unlock_data"; // For ad-based premium unlocks
 
+// ============================================
+// PREMIUM FEATURE FLAGS
+// ============================================
 // Set to true to enable dev mode (simulates premium without purchase)
 const ENABLE_DEV_MODE = false;
 
 // Set to true to use RevenueCat, false to use legacy expo-in-app-purchases
 const USE_REVENUECAT = true;
+
+// TEMPORARILY DISABLED: Set to false to disable all premium features (for freemium launch)
+// When AdMob is integrated, this will be set to true and ad unlocks will work
+const ENABLE_PREMIUM_FEATURES = false;
 
 export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   children,
@@ -69,9 +99,16 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   const [isPremium, setIsPremium] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [offerings, setOfferings] = useState<PurchasesOffering | null>(null);
+  
+  // Ad unlock state (for future AdMob integration)
+  const [adUnlockExpiresAt, setAdUnlockExpiresAt] = useState<Date | null>(null);
+  const [adUnlockType, setAdUnlockType] = useState<AdUnlockType | null>(null);
+  const [remainingAdUnlockTime, setRemainingAdUnlockTime] = useState(0);
+  const [canWatchAd, setCanWatchAd] = useState(true);
 
   useEffect(() => {
-    if (USE_REVENUECAT && Platform.OS !== "web") {
+    // Only initialize RevenueCat if premium features are enabled
+    if (ENABLE_PREMIUM_FEATURES && USE_REVENUECAT && Platform.OS !== "web") {
       initializeRevenueCat();
     }
     checkPremiumStatus();
@@ -79,7 +116,16 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
 
   // Update RevenueCat user ID when authentication changes
   useEffect(() => {
+    // Skip if premium features are disabled
+    if (!ENABLE_PREMIUM_FEATURES) return;
+    
     if (!Purchases || !USE_REVENUECAT || Platform.OS === "web") return;
+    
+    // Check if methods exist before calling
+    if (typeof Purchases.logIn !== 'function' || typeof Purchases.logOut !== 'function') {
+      console.warn("RevenueCat methods not available");
+      return;
+    }
 
     if (isAuthenticated && user) {
       Purchases.logIn(user.id.toString()).catch((error: any) => {
@@ -97,9 +143,58 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
     checkPremiumStatus();
   }, [isAuthenticated, user]);
 
+  // Check ad unlock status periodically (every minute)
+  useEffect(() => {
+    const checkAdUnlock = async () => {
+      if (!ENABLE_PREMIUM_FEATURES) return;
+      
+      const hasAdUnlock = await isAdUnlockActive();
+      if (hasAdUnlock) {
+        const remaining = await getRemainingUnlockTime();
+        setRemainingAdUnlockTime(remaining);
+        if (remaining === 0) {
+          // Unlock expired, refresh premium status
+          await checkPremiumStatus();
+        }
+      } else {
+        setRemainingAdUnlockTime(0);
+        setAdUnlockExpiresAt(null);
+        setAdUnlockType(null);
+      }
+    };
+
+    // Check immediately
+    checkAdUnlock();
+
+    // Then check every minute
+    const interval = setInterval(checkAdUnlock, 60000); // 60 seconds
+
+    return () => clearInterval(interval);
+  }, []);
+
+  // Update canWatchAd status
+  useEffect(() => {
+    const updateCanWatchAd = async () => {
+      if (!ENABLE_PREMIUM_FEATURES) {
+        setCanWatchAd(false);
+        return;
+      }
+      const { canWatchAd: canWatch } = await import("@/lib/adUnlock");
+      const canWatchResult = await canWatch();
+      setCanWatchAd(canWatchResult);
+    };
+    updateCanWatchAd();
+  }, []);
+
   const initializeRevenueCat = async () => {
     if (!Purchases) {
       console.warn("RevenueCat SDK not available");
+      return;
+    }
+
+    // Check if configure method exists
+    if (typeof Purchases.configure !== 'function') {
+      console.warn("RevenueCat configure method not available. SDK may not be properly loaded.");
       return;
     }
 
@@ -117,17 +212,21 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
         await Purchases.configure({ apiKey });
 
         // Fetch offerings
-        const offerings = await Purchases.getOfferings();
-        if (offerings.current !== null) {
-          setOfferings(offerings.current);
+        if (typeof Purchases.getOfferings === 'function') {
+          const offerings = await Purchases.getOfferings();
+          if (offerings.current !== null) {
+            setOfferings(offerings.current);
+          }
         }
 
         // Set up customer info update listener
-        Purchases.addCustomerInfoUpdateListener(
-          (customerInfo: CustomerInfo) => {
-            updatePremiumStatus(customerInfo);
-          }
-        );
+        if (typeof Purchases.addCustomerInfoUpdateListener === 'function') {
+          Purchases.addCustomerInfoUpdateListener(
+            (customerInfo: CustomerInfo) => {
+              updatePremiumStatus(customerInfo);
+            }
+          );
+        }
       } else {
         console.warn(
           "RevenueCat API key not configured. Using dev mode or fallback."
@@ -150,6 +249,13 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   const checkPremiumStatus = async () => {
     try {
       setIsLoading(true);
+
+      // TEMPORARILY DISABLED: Return false if premium features are disabled
+      if (!ENABLE_PREMIUM_FEATURES) {
+        setIsPremium(false);
+        setIsLoading(false);
+        return;
+      }
 
       // Check dev mode first (for development/testing)
       if (ENABLE_DEV_MODE) {
@@ -201,6 +307,28 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
           console.warn("Error checking backend subscription:", error);
           // Fall through to local check
         }
+      }
+
+      // Check ad-based unlock (for future AdMob integration)
+      const hasAdUnlock = await isAdUnlockActive();
+      if (hasAdUnlock) {
+        const remaining = await getRemainingUnlockTime();
+        setRemainingAdUnlockTime(remaining);
+        // Get unlock data for type
+        const { getAdUnlockData } = await import("@/lib/adUnlock");
+        const unlockData = await getAdUnlockData();
+        if (unlockData) {
+          setAdUnlockExpiresAt(new Date(unlockData.expiresAt));
+          setAdUnlockType(unlockData.unlockType);
+        }
+        setIsPremium(true);
+        setIsLoading(false);
+        return;
+      } else {
+        // Clear ad unlock state if expired
+        setAdUnlockExpiresAt(null);
+        setAdUnlockType(null);
+        setRemainingAdUnlockTime(0);
       }
 
       // Check local storage
@@ -366,6 +494,22 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
+  // Placeholder for AdMob integration - will be implemented when AdMob is added
+  const watchAdForPremium = async (unlockType: AdUnlockType): Promise<void> => {
+    // TODO: Implement AdMob rewarded ad watching
+    // This is a placeholder that will be replaced when AdMob is integrated
+    console.warn("AdMob integration not yet implemented. This will unlock premium when AdMob is added.");
+    throw new Error("AdMob integration not yet implemented");
+  };
+
+  const getAdUnlockStatus = () => {
+    return {
+      isActive: adUnlockExpiresAt !== null && remainingAdUnlockTime > 0,
+      expiresAt: adUnlockExpiresAt,
+      timeRemaining: remainingAdUnlockTime,
+    };
+  };
+
   const contextValue: PremiumContextType = {
     isPremium,
     isLoading,
@@ -373,6 +517,12 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
     restorePurchases,
     checkPremiumStatus,
     offerings,
+    adUnlockExpiresAt,
+    adUnlockType,
+    remainingAdUnlockTime,
+    canWatchAd,
+    watchAdForPremium,
+    getAdUnlockStatus,
     ...(ENABLE_DEV_MODE ? { toggleDevMode } : {}),
   };
 

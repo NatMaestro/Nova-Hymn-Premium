@@ -9,23 +9,31 @@ import {
   ScrollView,
   TextInput,
   Platform,
+  ActivityIndicator,
 } from "react-native";
 import React, { useState } from "react";
 import SearchComponent from "@/components/Search";
 import { useLocalSearchParams, useRouter } from "expo-router";
-import { getCategories, getHymns } from "@/lib/api";
 import { Hymn } from "@/types";
 import { useDenomination } from "@/contexts/DenominationContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import DenominationSidebar from "@/components/DenominationSidebar";
+import { useAppDispatch, useAppSelector } from "@/store/hooks";
+import { fetchHymns } from "@/store/slices/hymnsSlice";
+import { fetchCategories } from "@/store/slices/categoriesSlice";
+import {
+  selectHymnsByDenomination,
+  selectHymnsLoading,
+  selectAllCategories,
+  selectCategoriesLoading,
+} from "@/store/selectors";
 
 const AllHymns = () => {
   const router = useRouter();
   const { category } = useLocalSearchParams<{ category: string }>();
   const { selectedDenomination, selectedPeriod } = useDenomination();
   const { theme } = useTheme();
-  const [categories, setCategories] = useState<Array<any>>([]);
-  const [dataItem, setDataItem] = useState<Hymn[]>([]);
+  const dispatch = useAppDispatch();
   const [searchedData, setSearchedData] = useState<Hymn[]>([]);
   const [selectedCategory, setSelectedCategory] = useState(category || "all");
   const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
@@ -33,53 +41,40 @@ const AllHymns = () => {
   const [filterLanguage, setFilterLanguage] = useState("");
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  React.useEffect(() => {
-    const fetchData = async () => {
-      try {
-        const params: any = {};
-        if (selectedDenomination) {
-          params.denomination = selectedDenomination.id;
-          if (selectedDenomination.slug === "catholic" && selectedPeriod) {
-            params.hymn_period = selectedPeriod;
-          }
-        }
-        const response = await getHymns(params);
-        // Transform HymnListResponse[] to Hymn[]
-        const hymns: Hymn[] = response.results.map((h) => ({
-          id: h.id,
-          number: h.number,
-          title: h.title,
-          slug: h.slug,
-          author: h.author,
-          author_name: h.author_name,
-          category: h.category,
-          category_name: h.category_name,
-          language: h.language,
-          is_premium: h.is_premium,
-          is_featured: h.is_featured,
-          view_count: h.view_count,
-          created_at: h.created_at,
-        }));
-        setDataItem(hymns);
-        setSearchedData(hymns);
-      } catch (error) {
-        console.error("Error fetching hymns:", error);
-      }
-    };
-    fetchData();
-  }, [selectedDenomination, selectedPeriod]);
+  // Redux selectors
+  const dataItem = useAppSelector((state) =>
+    selectHymnsByDenomination(
+      state,
+      selectedDenomination?.id,
+      selectedDenomination?.slug === "catholic" ? selectedPeriod : undefined
+    )
+  );
+  const loadingHymns = useAppSelector(selectHymnsLoading);
+  const categories = useAppSelector(selectAllCategories);
+  const loadingCategories = useAppSelector(selectCategoriesLoading);
 
+  // Fetch hymns from Redux (with caching)
   React.useEffect(() => {
-    const fetchCategories = async () => {
-      try {
-        const categories = await getCategories();
-        setCategories(categories);
-      } catch (error) {
-        console.error("Error fetching categories:", error);
+    if (selectedDenomination) {
+      const params: any = {
+        denomination: selectedDenomination.id,
+      };
+      if (selectedDenomination.slug === "catholic" && selectedPeriod) {
+        params.hymn_period = selectedPeriod;
       }
-    };
-    fetchCategories();
-  }, []);
+      dispatch(fetchHymns(params));
+    }
+  }, [dispatch, selectedDenomination, selectedPeriod]);
+
+  // Update searchedData when dataItem changes
+  React.useEffect(() => {
+    setSearchedData(dataItem);
+  }, [dataItem]);
+
+  // Fetch categories from Redux (with caching)
+  React.useEffect(() => {
+    dispatch(fetchCategories());
+  }, [dispatch]);
 
   React.useEffect(() => {
     if (!dataItem || dataItem.length === 0) return;
@@ -271,18 +266,27 @@ const AllHymns = () => {
               showsHorizontalScrollIndicator={false}
               className="mt-4"
             >
-              <TouchableOpacity onPress={() => categorySort("all")}>
-                <Text
-                  className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
-                    selectedCategory === "all"
-                      ? "bg-navy text-white"
-                      : "bg-[#F6F1DA] text-[#062958]"
-                  }`}
-                >
-                  All
-                </Text>
-              </TouchableOpacity>
-              {categories.map((cat) => {
+              {loadingCategories ? (
+                <View className="flex-row items-center px-4">
+                  <ActivityIndicator size="small" color="#062958" />
+                  <Text className="ml-2 text-base text-[#062958] opacity-70">
+                    Loading categories...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity onPress={() => categorySort("all")}>
+                    <Text
+                      className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
+                        selectedCategory === "all"
+                          ? "bg-navy text-white"
+                          : "bg-[#F6F1DA] text-[#062958]"
+                      }`}
+                    >
+                      All
+                    </Text>
+                  </TouchableOpacity>
+                  {categories.map((cat) => {
                 const catIdStr = String(cat.id);
                 const isSelected = selectedCategory === catIdStr;
                 return (
@@ -302,6 +306,8 @@ const AllHymns = () => {
                   </TouchableOpacity>
                 );
               })}
+                </>
+              )}
             </ScrollView>
           </View>
 
@@ -368,41 +374,50 @@ const AllHymns = () => {
           </View>
 
           <View className="flex-1 px-5 mt-4">
-            <FlatList
-              data={searchedData}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onPress={() =>
-                    router.push({
-                      pathname: "/all-hymns/[id]",
-                      params: { id: item.id },
-                    })
-                  }
-                  className="flex flex-row items-center justify-between py-3 border-b border-[#E4E4E4]"
-                >
-                  <View className="flex flex-row items-center">
-                    <Text className="text-xl text-[#062958] w-12">
-                      {item.number}
-                    </Text>
-                    <Text className="text-2xl text-[#062958] font-semibold ml-6">
-                      {truncateTitle(item.title)}
-                    </Text>
-                  </View>
-                  <Image
-                    source={require("../../assets/icons/forward.png")}
-                    className="h-6 w-6"
-                    resizeMode="contain"
-                  />
-                </TouchableOpacity>
-              )}
-              showsVerticalScrollIndicator={true}
-              ListEmptyComponent={() => (
-                <Text className="text-center text-[#062958] mt-4">
-                  No hymns found.
+            {loadingHymns ? (
+              <View className="flex-1 justify-center items-center py-20">
+                <ActivityIndicator size="large" color="#062958" />
+                <Text className="text-lg mt-4 text-center text-[#062958] opacity-70">
+                  Loading hymns...
                 </Text>
-              )}
-            />
+              </View>
+            ) : (
+              <FlatList
+                data={searchedData}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    onPress={() =>
+                      router.push({
+                        pathname: "/all-hymns/[id]",
+                        params: { id: item.id },
+                      })
+                    }
+                    className="flex flex-row items-center justify-between py-3 border-b border-[#E4E4E4]"
+                  >
+                    <View className="flex flex-row items-center">
+                      <Text className="text-xl text-[#062958] w-12">
+                        {item.number}
+                      </Text>
+                      <Text className="text-2xl text-[#062958] font-semibold ml-6">
+                        {truncateTitle(item.title)}
+                      </Text>
+                    </View>
+                    <Image
+                      source={require("../../assets/icons/forward.png")}
+                      className="h-6 w-6"
+                      resizeMode="contain"
+                    />
+                  </TouchableOpacity>
+                )}
+                showsVerticalScrollIndicator={true}
+                ListEmptyComponent={() => (
+                  <Text className="text-center text-[#062958] mt-4">
+                    No hymns found.
+                  </Text>
+                )}
+              />
+            )}
           </View>
         </SafeAreaView>
       )}
@@ -472,37 +487,48 @@ const AllHymns = () => {
               showsHorizontalScrollIndicator={false}
               className="mt-4"
             >
-              <TouchableOpacity onPress={() => categorySort("all")}>
-                <Text
-                  className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
-                    selectedCategory === "all"
-                      ? "bg-navy text-white"
-                      : "bg-[#F6F1DA] text-[#062958]"
-                  }`}
-                >
-                  All
-                </Text>
-              </TouchableOpacity>
-              {categories.map((cat) => {
-                const catIdStr = String(cat.id);
-                const isSelected = selectedCategory === catIdStr;
-                return (
-                  <TouchableOpacity
-                    key={cat.id}
-                    onPress={() => categorySort(catIdStr)}
-                  >
+              {loadingCategories ? (
+                <View className="flex-row items-center px-4">
+                  <ActivityIndicator size="small" color="#062958" />
+                  <Text className="ml-2 text-base text-[#062958] opacity-70">
+                    Loading categories...
+                  </Text>
+                </View>
+              ) : (
+                <>
+                  <TouchableOpacity onPress={() => categorySort("all")}>
                     <Text
                       className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
-                        isSelected
-                          ? "bg-[#071c49] text-white"
+                        selectedCategory === "all"
+                          ? "bg-navy text-white"
                           : "bg-[#F6F1DA] text-[#062958]"
                       }`}
                     >
-                      {cat?.name}
+                      All
                     </Text>
                   </TouchableOpacity>
-                );
-              })}
+                  {categories.map((cat) => {
+                    const catIdStr = String(cat.id);
+                    const isSelected = selectedCategory === catIdStr;
+                    return (
+                      <TouchableOpacity
+                        key={cat.id}
+                        onPress={() => categorySort(catIdStr)}
+                      >
+                        <Text
+                          className={`flex items-center justify-center px-4 py-2 rounded-full font-semibold mr-3 ${
+                            isSelected
+                              ? "bg-[#071c49] text-white"
+                              : "bg-[#F6F1DA] text-[#062958]"
+                          }`}
+                        >
+                          {cat?.name}
+                        </Text>
+                      </TouchableOpacity>
+                    );
+                  })}
+                </>
+              )}
             </ScrollView>
           </View>
 
@@ -573,41 +599,50 @@ const AllHymns = () => {
           </View>
 
           <View className="flex-1 px-5 mt-4">
-            <FlatList
-              data={searchedData}
-              keyExtractor={(item) => item.id.toString()}
-              renderItem={({ item }) => (
-                <TouchableOpacity
-                  onPress={() =>
-                    router.push({
-                      pathname: "/all-hymns/[id]",
-                      params: { id: item.id },
-                    })
-                  }
-                  className="flex flex-row items-center justify-between py-3 border-b border-[#E4E4E4]"
-                >
-                  <View className="flex flex-row items-center">
-                    <Text className="text-xl text-[#062958] w-12">
-                      {item.number}
-                    </Text>
-                    <Text className="text-2xl text-[#062958] font-semibold ml-6">
-                      {truncateTitle(item.title)}
-                    </Text>
-                  </View>
-                  <Image
-                    source={require("../../assets/icons/forward.png")}
-                    className="h-6 w-6"
-                    resizeMode="contain"
-                  />
-                </TouchableOpacity>
-              )}
-              showsVerticalScrollIndicator={true}
-              ListEmptyComponent={() => (
-                <Text className="text-center text-[#062958] mt-4">
-                  No hymns found.
+            {loadingHymns ? (
+              <View className="flex-1 justify-center items-center py-20">
+                <ActivityIndicator size="large" color="#062958" />
+                <Text className="text-lg mt-4 text-center text-[#062958] opacity-70">
+                  Loading hymns...
                 </Text>
-              )}
-            />
+              </View>
+            ) : (
+              <FlatList
+                data={searchedData}
+                keyExtractor={(item) => item.id.toString()}
+                renderItem={({ item }) => (
+                  <TouchableOpacity
+                    onPress={() =>
+                      router.push({
+                        pathname: "/all-hymns/[id]",
+                        params: { id: item.id },
+                      })
+                    }
+                    className="flex flex-row items-center justify-between py-3 border-b border-[#E4E4E4]"
+                  >
+                    <View className="flex flex-row items-center">
+                      <Text className="text-xl text-[#062958] w-12">
+                        {item.number}
+                      </Text>
+                      <Text className="text-2xl text-[#062958] font-semibold ml-6">
+                        {truncateTitle(item.title)}
+                      </Text>
+                    </View>
+                    <Image
+                      source={require("../../assets/icons/forward.png")}
+                      className="h-6 w-6"
+                      resizeMode="contain"
+                    />
+                  </TouchableOpacity>
+                )}
+                showsVerticalScrollIndicator={true}
+                ListEmptyComponent={() => (
+                  <Text className="text-center text-[#062958] mt-4">
+                    No hymns found.
+                  </Text>
+                )}
+              />
+            )}
           </View>
         </SafeAreaView>
       )}
