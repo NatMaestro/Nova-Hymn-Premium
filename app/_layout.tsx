@@ -9,6 +9,7 @@ import { VocalMixProvider } from "@/contexts/VocalMixContext";
 import { DenominationProvider } from "@/contexts/DenominationContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { useEffect } from "react";
+import { Platform } from "react-native";
 
 function RootLayoutNav() {
   const { isPremium } = usePremium();
@@ -62,6 +63,43 @@ function RootLayoutNav() {
 }
 
 export default function RootLayout() {
+  useEffect(() => {
+    let isMounted = true;
+
+    const initializeMobileAds = async () => {
+      if (Platform.OS === "web") return;
+
+      try {
+        const adsModule = require("react-native-google-mobile-ads");
+        const mobileAds = adsModule.default;
+        const MaxAdContentRating = adsModule.MaxAdContentRating;
+
+        await mobileAds().setRequestConfiguration({
+          maxAdContentRating: MaxAdContentRating.PG,
+          tagForChildDirectedTreatment: false,
+          tagForUnderAgeOfConsent: false,
+          testDeviceIdentifiers: __DEV__ ? ["EMULATOR"] : [],
+        });
+
+        if (isMounted) {
+          await mobileAds().initialize();
+        }
+
+        if (__DEV__) {
+          console.log("[AdMob] Mobile Ads initialized");
+        }
+      } catch (error) {
+        console.warn("[AdMob] Failed to initialize mobile ads:", error);
+      }
+    };
+
+    initializeMobileAds();
+
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   return (
     <Provider store={store}>
       <AuthProvider>
