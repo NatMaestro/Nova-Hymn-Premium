@@ -29,8 +29,9 @@ const getStringEnv = (key: string, fallback: string = ""): string => {
 };
 
 const DEFAULT_ADMOB_TEST_IDS = {
-  rewardedAndroid: "ca-app-pub-3940256099942544/5224354917",
-  rewardedIos: "ca-app-pub-3940256099942544/1712485313",
+  rewardedAndroid: "ca-app-pub-9675131081126619/3893725811",
+  rewardedIos: "ca-app-pub-9675131081126619/5226988781",
+  //change the banner later
   bannerAndroid: "ca-app-pub-3940256099942544/6300978111",
   bannerIos: "ca-app-pub-3940256099942544/2934735716",
 };
