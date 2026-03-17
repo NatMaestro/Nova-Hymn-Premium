@@ -19,7 +19,7 @@ import {
   getAdUnlockData,
   getAdWatchBlockReason,
 } from "@/lib/adUnlock";
-import { runRewardedAdFlow } from "@/lib/admob";
+import { getRewardedAdAvailability, runRewardedAdFlow } from "@/lib/admob";
 
 // Dynamically import RevenueCat to handle cases where it's not installed
 let Purchases: any = null;
@@ -181,6 +181,12 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   // Update canWatchAd status
   useEffect(() => {
     const updateCanWatchAd = async () => {
+      const availability = getRewardedAdAvailability();
+      if (!availability.available) {
+        setCanWatchAd(false);
+        return;
+      }
+
       const canWatchResult = await canWatchAdUtil();
       setCanWatchAd(canWatchResult);
     };
@@ -498,6 +504,11 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   const watchAdForPremium = async (unlockType: AdUnlockType): Promise<void> => {
     if (Platform.OS === "web") {
       throw new Error("Rewarded ads are not supported on web.");
+    }
+
+    const availability = getRewardedAdAvailability();
+    if (!availability.available) {
+      throw new Error(availability.reason || "Rewarded ads are unavailable in this build.");
     }
 
     const blockReason = await getAdWatchBlockReason();

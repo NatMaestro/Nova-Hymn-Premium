@@ -9,7 +9,8 @@ import { VocalMixProvider } from "@/contexts/VocalMixContext";
 import { DenominationProvider } from "@/contexts/DenominationContext";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { useEffect } from "react";
-import { Platform } from "react-native";
+import { NativeModules, Platform } from "react-native";
+import Constants from "expo-constants";
 
 function RootLayoutNav() {
   const { isPremium } = usePremium();
@@ -68,6 +69,21 @@ export default function RootLayout() {
 
     const initializeMobileAds = async () => {
       if (Platform.OS === "web") return;
+
+      // In Expo Go, native AdMob modules are not linked.
+      if (Constants.executionEnvironment === "storeClient") {
+        if (__DEV__) {
+          console.warn("[AdMob] Skipping initialization in Expo Go (storeClient)");
+        }
+        return;
+      }
+
+      if (!NativeModules.RNGoogleMobileAdsModule) {
+        console.warn(
+          "[AdMob] Native module RNGoogleMobileAdsModule not found. Rebuild and run a dev client/standalone build."
+        );
+        return;
+      }
 
       try {
         const adsModule = require("react-native-google-mobile-ads");

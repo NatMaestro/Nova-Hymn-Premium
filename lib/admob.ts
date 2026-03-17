@@ -1,4 +1,5 @@
-import { Platform } from "react-native";
+import { NativeModules, Platform } from "react-native";
+import Constants from "expo-constants";
 import { ADMOB_CONFIG } from "@/lib/config";
 
 const DEV_TEST_REWARDED_IDS = {
@@ -48,6 +49,35 @@ export interface RewardedAdFlowResult {
   shownAt: number;
   completedAt: number;
 }
+
+export interface RewardedAdAvailability {
+  available: boolean;
+  reason?: string;
+}
+
+export const getRewardedAdAvailability = (): RewardedAdAvailability => {
+  if (Platform.OS === "web") {
+    return { available: false, reason: "Rewarded ads are not supported on web." };
+  }
+
+  if (Constants.executionEnvironment === "storeClient") {
+    return {
+      available: false,
+      reason:
+        "Rewarded ads are unavailable in Expo Go. Use a dev client or release build.",
+    };
+  }
+
+  if (!NativeModules.RNGoogleMobileAdsModule) {
+    return {
+      available: false,
+      reason:
+        "AdMob native module is missing. Rebuild the app after native dependency changes.",
+    };
+  }
+
+  return { available: true };
+};
 
 const getMobileAdsModule = (): MobileAdsModule => {
   try {
@@ -207,6 +237,11 @@ export const showRewardedAd = async (
 };
 
 export const runRewardedAdFlow = async (): Promise<RewardedAdFlowResult> => {
+  const availability = getRewardedAdAvailability();
+  if (!availability.available) {
+    throw new Error(availability.reason || "Rewarded ads are unavailable in this build.");
+  }
+
   const { ad, adUnitId, loadedAt } = await loadRewardedAd();
   const shownAt = Date.now();
   const reward = await showRewardedAd(ad);
