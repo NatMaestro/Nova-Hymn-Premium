@@ -6,6 +6,7 @@
  */
 
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { AD_UNLOCK_SETTINGS } from "@/lib/config";
 
 export type AdUnlockType = "short" | "medium" | "long";
 
@@ -21,15 +22,15 @@ const AD_UNLOCK_STORAGE_KEY = "ad_unlock_data";
 // Unlock duration configuration (in hours)
 export const AD_UNLOCK_CONFIG: Record<AdUnlockType, { durationHours: number; label: string }> = {
   short: {
-    durationHours: 1,
+    durationHours: AD_UNLOCK_SETTINGS.durationsHours.short,
     label: "1 Hour Premium",
   },
   medium: {
-    durationHours: 4,
+    durationHours: AD_UNLOCK_SETTINGS.durationsHours.medium,
     label: "4 Hours Premium",
   },
   long: {
-    durationHours: 24,
+    durationHours: AD_UNLOCK_SETTINGS.durationsHours.long,
     label: "24 Hours Premium",
   },
 };
@@ -141,7 +142,10 @@ export const createAdUnlock = async (unlockType: AdUnlockType): Promise<AdUnlock
 /**
  * Check if user can watch another ad (rate limiting)
  */
-export const canWatchAd = async (maxAdsPerDay: number = 5): Promise<boolean> => {
+export const canWatchAd = async (
+  maxAdsPerDay: number = AD_UNLOCK_SETTINGS.maxAdsPerDay
+): Promise<boolean> => {
+  const dailyLimit = maxAdsPerDay;
   const data = await getAdUnlockData();
   if (!data) return true;
 
@@ -153,7 +157,7 @@ export const canWatchAd = async (maxAdsPerDay: number = 5): Promise<boolean> => 
   }
 
   // Check if under daily limit
-  return data.adUnlockCount < maxAdsPerDay;
+  return data.adUnlockCount < dailyLimit;
 };
 
 /**
