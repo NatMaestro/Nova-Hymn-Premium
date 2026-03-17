@@ -17,6 +17,7 @@ import {
   createAdUnlock,
   canWatchAd as canWatchAdUtil,
   getAdUnlockData,
+  getAdWatchBlockReason,
 } from "@/lib/adUnlock";
 import { runRewardedAdFlow } from "@/lib/admob";
 
@@ -499,9 +500,15 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
       throw new Error("Rewarded ads are not supported on web.");
     }
 
-    const canWatch = await canWatchAdUtil();
-    if (!canWatch) {
-      throw new Error("Daily ad limit reached. Try again tomorrow.");
+    const blockReason = await getAdWatchBlockReason();
+    if (blockReason !== null) {
+      if (blockReason.reason === "daily_limit") {
+        throw new Error("Daily ad limit reached. Try again tomorrow.");
+      }
+      const mins = Math.ceil(blockReason.cooldownSecondsRemaining / 60);
+      throw new Error(
+        `Please wait ${mins} minute${mins === 1 ? "" : "s"} before watching another ad.`
+      );
     }
 
     // This throws if the ad fails to load, times out, or user closes before reward.
