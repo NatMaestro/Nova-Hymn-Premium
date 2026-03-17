@@ -10,7 +10,15 @@ import { Platform } from "react-native";
 import { useAuth } from "./AuthContext";
 import { REVENUECAT_API_KEYS, ENTITLEMENT_ID } from "@/lib/revenuecat";
 import { verifySubscription } from "@/lib/api";
-import { isAdUnlockActive, getRemainingUnlockTime, AdUnlockType } from "@/lib/adUnlock";
+import {
+  isAdUnlockActive,
+  getRemainingUnlockTime,
+  AdUnlockType,
+  createAdUnlock,
+  canWatchAd as canWatchAdUtil,
+  getAdUnlockData,
+} from "@/lib/adUnlock";
+import { runRewardedAdFlow } from "@/lib/admob";
 
 // Dynamically import RevenueCat to handle cases where it's not installed
 let Purchases: any = null;
@@ -88,9 +96,8 @@ const ENABLE_DEV_MODE = false;
 // Set to true to use RevenueCat, false to use legacy expo-in-app-purchases
 const USE_REVENUECAT = true;
 
-// TEMPORARILY DISABLED: Set to false to disable all premium features (for freemium launch)
-// When AdMob is integrated, this will be set to true and ad unlocks will work
-const ENABLE_PREMIUM_FEATURES = false;
+// Ad unlock is now active — AdMob integration is wired up.
+const ENABLE_PREMIUM_FEATURES = true;
 
 export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   children,
@@ -146,8 +153,6 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   // Check ad unlock status periodically (every minute)
   useEffect(() => {
     const checkAdUnlock = async () => {
-      if (!ENABLE_PREMIUM_FEATURES) return;
-      
       const hasAdUnlock = await isAdUnlockActive();
       if (hasAdUnlock) {
         const remaining = await getRemainingUnlockTime();
@@ -175,12 +180,7 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
   // Update canWatchAd status
   useEffect(() => {
     const updateCanWatchAd = async () => {
-      if (!ENABLE_PREMIUM_FEATURES) {
-        setCanWatchAd(false);
-        return;
-      }
-      const { canWatchAd: canWatch } = await import("@/lib/adUnlock");
-      const canWatchResult = await canWatch();
+      const canWatchResult = await canWatchAdUtil();
       setCanWatchAd(canWatchResult);
     };
     updateCanWatchAd();
@@ -494,12 +494,32 @@ export const PremiumProvider: React.FC<{ children: ReactNode }> = ({
     }
   };
 
-  // Placeholder for AdMob integration - will be implemented when AdMob is added
   const watchAdForPremium = async (unlockType: AdUnlockType): Promise<void> => {
-    // TODO: Implement AdMob rewarded ad watching
-    // This is a placeholder that will be replaced when AdMob is integrated
-    console.warn("AdMob integration not yet implemented. This will unlock premium when AdMob is added.");
-    throw new Error("AdMob integration not yet implemented");
+    if (Platform.OS === "web") {
+      throw new Error("Rewarded ads are not supported on web.");
+    }
+
+    const canWatch = await canWatchAdUtil();
+    if (!canWatch) {
+      throw new Error("Daily ad limit reached. Try again tomorrow.");
+    }
+
+    // This throws if the ad fails to load, times out, or user closes before reward.
+    await runRewardedAdFlow();
+
+    // Only reaches here after reward is confirmed earned.
+    const unlockData = await createAdUnlock(unlockType);
+    const remaining = await getRemainingUnlockTime();
+
+    // Update state immediately — no need to re-run checkPremiumStatus.
+    setAdUnlockExpiresAt(new Date(unlockData.expiresAt));
+    setAdUnlockType(unlockData.unlockType);
+    setRemainingAdUnlockTime(remaining);
+    setIsPremium(true);
+
+    // Refresh canWatchAd after consuming one ad slot.
+    const canWatchNext = await canWatchAdUtil();
+    setCanWatchAd(canWatchNext);
   };
 
   const getAdUnlockStatus = () => {
