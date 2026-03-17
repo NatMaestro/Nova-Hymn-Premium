@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatRemainingTime, AdUnlockType } from '@/lib/adUnlock';
 import {
   View,
   Text,
@@ -28,11 +29,41 @@ type TabType = 'overview' | 'settings' | 'account';
 const PremiumScreen = () => {
   const router = useRouter();
   const { theme } = useTheme();
-  const { isPremium, purchasePremium, restorePurchases, isLoading, toggleDevMode } = usePremium();
+  const {
+    isPremium,
+    purchasePremium,
+    restorePurchases,
+    isLoading,
+    toggleDevMode,
+    watchAdForPremium,
+    canWatchAd,
+    remainingAdUnlockTime,
+    adUnlockType,
+  } = usePremium();
   const { isAuthenticated } = useAuth();
   const [purchasing, setPurchasing] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>('overview');
   const [showAuthModal, setShowAuthModal] = useState(false);
+  const [watchingAdType, setWatchingAdType] = useState<AdUnlockType | null>(null);
+
+  const AD_UNLOCK_OPTIONS: { type: AdUnlockType; duration: string; sub: string }[] = [
+    { type: 'short', duration: '1 Hour', sub: 'Quick access' },
+    { type: 'medium', duration: '4 Hours', sub: 'Afternoon session' },
+    { type: 'long', duration: '24 Hours', sub: 'Full day access' },
+  ];
+
+  const handleWatchAd = async (unlockType: AdUnlockType) => {
+    try {
+      setWatchingAdType(unlockType);
+      await watchAdForPremium(unlockType);
+      const option = AD_UNLOCK_OPTIONS.find((o) => o.type === unlockType);
+      Alert.alert('Premium Unlocked!', `You now have premium access for ${option?.duration ?? unlockType}.`);
+    } catch (error: any) {
+      Alert.alert('Ad Error', error.message || 'Failed to load ad. Please try again.');
+    } finally {
+      setWatchingAdType(null);
+    }
+  };
 
   const features = [
     { name: 'Unlimited favorites', available: true },
@@ -201,6 +232,31 @@ const PremiumScreen = () => {
               <Text style={[styles.premiumSubtitle, { color: theme.colors.textSecondary }]}>
                 Thank you for supporting Nova Hymnal. Enjoy all premium features!
               </Text>
+                {adUnlockType && (remainingAdUnlockTime ?? 0) > 0 && (
+                  <View style={[styles.countdownBanner, { borderColor: theme.colors.border }]}>
+                    <Text style={[styles.countdownLabel, { color: theme.colors.textSecondary }]}>
+                      Temporary access expires in
+                    </Text>
+                    <Text style={[styles.countdownTime, { color: theme.colors.text }]}>
+                      {formatRemainingTime(remainingAdUnlockTime ?? 0)}
+                    </Text>
+                    {canWatchAd && (
+                      <TouchableOpacity
+                        onPress={() => handleWatchAd(adUnlockType)}
+                        disabled={watchingAdType !== null}
+                        style={[styles.extendButton, { borderColor: theme.colors.border }]}
+                      >
+                        {watchingAdType === adUnlockType ? (
+                          <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                        ) : (
+                          <Text style={[styles.extendButtonText, { color: theme.colors.textSecondary }]}>
+                            Watch Ad to Extend
+                          </Text>
+                        )}
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                )}
             </View>
 
             <View style={{ marginTop: 24 }}>
@@ -310,6 +366,57 @@ const PremiumScreen = () => {
                 </View>
               </View>
             ))}
+          </View>
+
+          {/* Ad unlock section */}
+          <View style={[styles.adUnlockCard, { borderColor: theme.colors.border }]}>
+            <Text style={[styles.adUnlockTitle, { color: theme.colors.text }]}>
+              Try Premium Free with an Ad
+            </Text>
+            <Text style={[styles.adUnlockSubtitle, { color: theme.colors.textSecondary }]}>
+              Watch a short ad to unlock all premium features temporarily.
+            </Text>
+            <View style={styles.adUnlockButtons}>
+              {AD_UNLOCK_OPTIONS.map(({ type, duration, sub }) => (
+                <TouchableOpacity
+                  key={type}
+                  onPress={() => handleWatchAd(type)}
+                  disabled={watchingAdType !== null || !canWatchAd}
+                  style={[
+                    styles.adUnlockButton,
+                    {
+                      backgroundColor: theme.colors.card,
+                      borderColor: theme.colors.border,
+                      opacity: watchingAdType !== null || !canWatchAd ? 0.5 : 1,
+                    },
+                  ]}
+                >
+                  {watchingAdType === type ? (
+                    <ActivityIndicator size="small" color={theme.colors.textSecondary} />
+                  ) : (
+                    <>
+                      <Text style={[styles.adUnlockButtonLabel, { color: theme.colors.text }]}>
+                        {duration}
+                      </Text>
+                      <Text style={[styles.adUnlockButtonSub, { color: theme.colors.textSecondary }]}>
+                        {sub}
+                      </Text>
+                    </>
+                  )}
+                </TouchableOpacity>
+              ))}
+            </View>
+            {!canWatchAd && (
+              <Text style={[styles.adLimitText, { color: theme.colors.textSecondary }]}>
+                Ad limit reached or cooldown active. Try again later.
+              </Text>
+            )}
+          </View>
+
+          <View style={styles.orDivider}>
+            <View style={[styles.orDividerLine, { backgroundColor: theme.colors.border }]} />
+            <Text style={[styles.orDividerText, { color: theme.colors.textSecondary }]}>or</Text>
+            <View style={[styles.orDividerLine, { backgroundColor: theme.colors.border }]} />
           </View>
 
           <TouchableOpacity
@@ -764,6 +871,92 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     fontSize: 16,
+    fontWeight: '600',
+  },
+  adUnlockCard: {
+    borderRadius: 16,
+    borderWidth: 1.5,
+    padding: 20,
+    marginTop: 24,
+  },
+  adUnlockTitle: {
+    fontSize: 20,
+    fontWeight: '700',
+    marginBottom: 6,
+  },
+  adUnlockSubtitle: {
+    fontSize: 14,
+    lineHeight: 20,
+    marginBottom: 16,
+  },
+  adUnlockButtons: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  adUnlockButton: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 72,
+    gap: 4,
+  },
+  adUnlockButtonLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+  },
+  adUnlockButtonSub: {
+    fontSize: 11,
+    textAlign: 'center',
+  },
+  adLimitText: {
+    fontSize: 13,
+    textAlign: 'center',
+    marginTop: 12,
+    fontStyle: 'italic',
+  },
+  orDivider: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: 20,
+    gap: 12,
+  },
+  orDividerLine: {
+    flex: 1,
+    height: 1,
+  },
+  orDividerText: {
+    fontSize: 14,
+    fontWeight: '500',
+  },
+  countdownBanner: {
+    marginTop: 20,
+    width: '100%',
+    padding: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    alignItems: 'center',
+    gap: 6,
+  },
+  countdownLabel: {
+    fontSize: 13,
+  },
+  countdownTime: {
+    fontSize: 28,
+    fontWeight: '700',
+  },
+  extendButton: {
+    marginTop: 8,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  extendButtonText: {
+    fontSize: 14,
     fontWeight: '600',
   },
 });
